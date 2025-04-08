@@ -199,6 +199,7 @@ class Execute:
                                         resetPause = False
                                     else:
                                         inverter.adjust_discharge_rate(0)
+                                        inverter.adjust_charge_rate(0)
                                         resetDischarge = False
                                 else:
                                     inverter.adjust_charge_window(charge_start_time, charge_end_time, self.minutes_now)
