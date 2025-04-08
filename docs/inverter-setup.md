@@ -86,6 +86,9 @@ Verify in the GivEnergy portal settings the following inverter settings are set 
 - "Inverter Charge Power Percentage" is set to 100 (Predbat has its own low-rate charge control you can use if you wish)
 - "Inverter Discharge Power Percentage" is set to 100. If you do wish to set a lower discharge rate then its recommended that instead you set [inverter_limit_discharge in apps.yaml](apps-yaml.md#inverter-control-configurations) to the rate
 - "Battery Cutoff % Limit" is set to 4
+- "Enable AC Charge Upper Limit' is enabled (if you have this option)
+- That charge slot 2 (or more) are disabled (as Predbat only uses slot1)
+- That discharge slot 2 (or more) are disabled  (as Predbat only uses slot1)
 
 5. Specific Predbat configuration requirements for certain GivEnergy equipment
 
@@ -521,9 +524,11 @@ Or the custom method:
 ```yaml
 charge_start_service:
    - service: my_charge_start_service
-     device_id: {device_id}
-     power: {power}
-     soc: {target_soc}
+     device_id: "{device_id}"
+     power: "{power}"
+     soc: "{target_soc}"
+     charge_start_time: "{charge_start_time}"
+     charge_end_time: "{charge_end_time}"
 ```
 
 Here you can define all the values passed to the service and use the default values from the template or define your own.
@@ -533,9 +538,9 @@ You can also call more than one service e.g:
 ```yaml
 charge_start_service:
    - service: my_charge_start_service
-     device_id: {device_id}
-     power: {power}
-     soc: {target_soc}
+     device_id: "{device_id}"
+     power: "{power}"
+     soc: "{target_soc}"
    - service: switch.turn_off
      entity_id: switch.tsunami_charger
 ```
@@ -546,9 +551,9 @@ If however, you want the service to be called on each Predbat run then you shoul
 ```yaml
 charge_start_service:
    - service: my_charge_start_service
-     device_id: {device_id}
-     power: {power}
-     soc: {target_soc}
+     device_id: "{device_id}"
+     power: "{power}"
+     soc: "{target_soc}"
      repeat: True
 ```
 
@@ -561,6 +566,8 @@ The default options passed in are:
 - device_id - as defined in apps.yaml by **device_id**
 - target_soc - The SOC to charge to
 - power - The charge power to use
+- charge_start_time - Start time for the charge
+- charge_end_time - End time for the charge
 
 #### charge_freeze_service
 

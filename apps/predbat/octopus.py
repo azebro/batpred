@@ -297,12 +297,12 @@ class OctopusAPI:
         self.account_data = {}
         self.saving_sessions = {}
         self.saving_sessions_to_join = []
+        self.intelligent_device = {}
         self.api_started = False
         self.cache_path = self.base.config_root + "/cache"
         if not os.path.exists(self.cache_path):
             os.makedirs(self.cache_path)
         self.cache_file = self.cache_path + "/octopus.yaml"
-        self.octopus_cache = {}
 
     def wait_api_started(self):
         """
@@ -322,28 +322,31 @@ class OctopusAPI:
         """
         Main run loop
         """
-        count_seconds = 0
-
         # Load cached data
         await self.load_octopus_cache()
 
+        first = True
         while not self.stop_api:
-            # 30 minute update
             try:
-                if count_seconds % (30 * 60) == 0:
-                    self.now = datetime.now()
-                    self.now_utc = datetime.now(timezone.utc).astimezone()
-                    self.midnight_utc = self.now_utc.replace(hour=0, minute=0, second=0, microsecond=0)
-                    token = await self.async_refresh_token()
-                    self.account_data = await self.async_get_account(self.account_id)
-                    self.tariffs = await self.async_find_tariffs()
+                # Update time every minute
+                self.now = datetime.now()
+                self.now_utc = datetime.now(timezone.utc).astimezone()
+                count_minutes = self.now_utc.minute + self.now_utc.hour * 60
 
-                if count_seconds % (10 * 60) == 0:
+                if first or (count_minutes % 30) == 0:
+                    # 30-minute update for tariff
+                    self.midnight_utc = self.now_utc.replace(hour=0, minute=0, second=0, microsecond=0)
+                    await self.async_get_account(self.account_id)
+                    await self.async_find_tariffs()
+
+                if first or (count_minutes % 10) == 0:
+                    # 10-minute update for intelligent device
                     await self.async_update_intelligent_device(self.account_id)
                     await self.fetch_tariffs(self.tariffs)
                     self.saving_sessions = await self.async_get_saving_sessions(self.account_id)
 
-                if count_seconds % (2 * 60) == 0:
+                if first or (count_minutes % 2) == 0:
+                    # 2-minute update for intelligent device sensor
                     await self.async_intelligent_update_sensor(self.account_id)
                     await self.save_octopus_cache()
 
@@ -352,11 +355,12 @@ class OctopusAPI:
                 if not self.api_started:
                     print("Octopus API: Started")
                     self.api_started = True
+                first = False
 
             except Exception as e:
                 self.log("Error: Octopus API: {}".format(e))
-            await asyncio.sleep(5)
-            count_seconds += 5
+
+            await asyncio.sleep(60)
         await self.api.async_close()
         print("Octopus API: Stopped")
 
@@ -372,22 +376,25 @@ class OctopusAPI:
             except Exception as e:
                 self.log("Warn: Octopus API: Failed to load cache from {} - {}".format(self.cache_file, e))
 
-            self.octopus_cache = data
-            self.account_data = data.get("account_data", {})
-            self.tariffs = data.get("tariffs", {})
-            self.saving_sessions = data.get("saving_sessions", {})
-            self.url_cache = data.get("url_cache", {})
+            if data:
+                self.account_data = data.get("account_data", {})
+                self.tariffs = data.get("tariffs", {})
+                self.saving_sessions = data.get("saving_sessions", {})
+                self.url_cache = data.get("url_cache", {})
+                self.intelligent_device = data.get("intelligent_device", {})
 
     async def save_octopus_cache(self):
         """
         Save the octopus cache
         """
-        self.octopus_cache["account_data"] = self.account_data
-        self.octopus_cache["tariffs"] = self.tariffs
-        self.octopus_cache["saving_sessions"] = self.saving_sessions
-        self.octopus_cache["url_cache"] = self.url_cache
+        octopus_cache = {}
+        octopus_cache["account_data"] = self.account_data
+        octopus_cache["tariffs"] = self.tariffs
+        octopus_cache["saving_sessions"] = self.saving_sessions
+        octopus_cache["url_cache"] = self.url_cache
+        octopus_cache["intelligent_device"] = self.intelligent_device
         with open(self.cache_file, "w") as f:
-            yaml.dump(self.octopus_cache, f)
+            yaml.dump(octopus_cache, f)
 
     def stop(self):
         self.stop_api = True
@@ -403,9 +410,9 @@ class OctopusAPI:
         """
         self.log("Find tariffs account data {}".format(self.account_data))
         if not self.account_data:
-            return None
-        tariffs = {}
+            return self.tariffs
 
+        tariffs = {}
         gas = self.account_data.get("account", {}).get("gasAgreements", [])
         electric = self.account_data.get("account", {}).get("electricityAgreements", [])
         for agreement in electric + gas:
@@ -450,11 +457,18 @@ class OctopusAPI:
                 self.log("Octopus API: Found tariff code {} product {} device_id {}".format(tariffCode, productCode, deviceID_import))
                 if isImport:
                     tariffs["import"] = {"tariffCode": tariffCode, "productCode": productCode, "deviceID": deviceID_import}
+                    tariffs["import"]["data"] = self.tariffs.get("import", {}).get("data", None)
+                    tariffs["import"]["standing"] = self.tariffs.get("import", {}).get("standing", None)
                 if isExport:
                     tariffs["export"] = {"tariffCode": tariffCode, "productCode": productCode, "deviceID": deviceID_export}
+                    tariffs["export"]["data"] = self.tariffs.get("export", {}).get("data", None)
+                    tariffs["export"]["standing"] = self.tariffs.get("export", {}).get("standing", None)
                 if isGas:
                     tariffs["gas"] = {"tariffCode": tariffCode, "productCode": productCode, "deviceID": deviceID_gas}
-        return tariffs
+                    tariffs["gas"]["data"] = self.tariffs.get("gas", {}).get("data", None)
+                    tariffs["gas"]["standing"] = self.tariffs.get("gas", {}).get("standing", None)
+        self.tariffs = tariffs
+        return self.tariffs
 
     async def async_update_intelligent_device(self, account_id):
         """
@@ -462,11 +476,12 @@ class OctopusAPI:
         """
         import_tariff = self.tariffs.get("import", {})
         deviceID = import_tariff.get("deviceID", None)
-        completed_dispatches = self.get_intelligent_completed_dispatches()
         if deviceID:
-            device = await self.async_get_intelligent_device(account_id, deviceID, completed_dispatches)
-            if device:
-                self.tariffs["import"]["intelligent_device"] = device
+            completed_dispatches = self.get_intelligent_completed_dispatches()
+            intelligent_device = await self.async_get_intelligent_device(account_id, deviceID, completed_dispatches)
+            if intelligent_device is not None:
+                self.intelligent_device = intelligent_device
+        return self.intelligent_device
 
     def join_saving_session_event(self, event_code):
         """
@@ -494,13 +509,13 @@ class OctopusAPI:
         """
         Get the intelligent device
         """
-        return self.tariffs.get("import", {}).get("intelligent_device", None)
+        return self.intelligent_device
 
     def get_intelligent_completed_dispatches(self):
         """
         Get the completed intelligent dispatches
         """
-        devices = self.tariffs.get("import", {}).get("intelligent_device", None)
+        devices = self.get_intelligent_device()
         if devices:
             return devices.get("completed_dispatches", [])
         else:
@@ -510,7 +525,7 @@ class OctopusAPI:
         """
         Get the intelligent dispatches
         """
-        devices = self.tariffs.get("import", {}).get("intelligent_device", None)
+        devices = self.get_intelligent_device()
         if devices:
             return devices.get("planned_dispatches", [])
         else:
@@ -522,7 +537,7 @@ class OctopusAPI:
         """
         vehicle = {}
 
-        devices = self.tariffs.get("import", {}).get("intelligent_device", None)
+        devices = self.get_intelligent_device()
         if devices:
             vehicle["vehicleBatterySizeInKwh"] = devices.get("vehicle_battery_size_in_kwh", None)
             vehicle["chargePointPowerInKw"] = devices.get("charge_point_power_in_kw", None)
@@ -545,7 +560,7 @@ class OctopusAPI:
         """
         Get the intelligent battery size
         """
-        devices = self.tariffs.get("import", {}).get("intelligent_device", None)
+        devices = self.get_intelligent_device()
         if devices:
             return devices.get("vehicle_battery_size_in_kwh", None)
         else:
@@ -555,7 +570,7 @@ class OctopusAPI:
         """
         Get the intelligent target time
         """
-        devices = self.tariffs.get("import", {}).get("intelligent_device", None)
+        devices = self.get_intelligent_device()
         if devices:
             return devices.get("weekday_target_time", None)
         else:
@@ -565,7 +580,7 @@ class OctopusAPI:
         """
         Get the intelligent target soc
         """
-        devices = self.tariffs.get("import", {}).get("intelligent_device", None)
+        devices = self.get_intelligent_device()
         if devices:
             return devices.get("weekday_target_soc", None)
         else:
@@ -628,7 +643,10 @@ class OctopusAPI:
         Get the saving sessions
         """
         response_data = await self.async_graphql_query(octoplus_saving_session_query.format(account_id=self.account_id), "get-saving-sessions")
-        return response_data.get("savingSessions", {})
+        if response_data is None:
+            return self.saving_sessions
+        else:
+            return response_data.get("savingSessions", {})
 
     async def async_download_octopus_url(self, url):
         """
@@ -817,7 +835,7 @@ class OctopusAPI:
         """
         Get the intelligent dispatches/device
         """
-        result = {}
+        result = None
         if device_id:
             self.log("Octopus API: Fetching intelligent dispatches for device {}".format(device_id))
             device_result = await self.async_graphql_query(intelligent_device_query.format(account_id=account_id), "get-intelligent-devices", ignore_errors=True)
@@ -825,6 +843,7 @@ class OctopusAPI:
 
             planned = []
             if device_result:
+                result = {}
                 dispatch_result = await self.async_graphql_query(intelligent_dispatches_query.format(account_id=account_id, device_id=device_id), "get-intelligent-dispatches", ignore_errors=True)
                 chargePointVariants = device_result.get("chargePointVariants", [])
                 electricVehicles = device_result.get("electricVehicles", [])
@@ -904,6 +923,11 @@ class OctopusAPI:
                                         break
                                 if not found:
                                     completed.append(dispatch)
+
+                        # Sort by start time
+                        planned = sorted(planned, key=lambda x: parse_date_time(x["start"]))
+                        completed = sorted(completed, key=lambda x: parse_date_time(x["start"]))
+
                         # Prune completed dispatches for results older than 5 days
                         completed = [x for x in completed if parse_date_time(x["start"]) > self.now_utc - timedelta(days=5)]
                         # Store results
@@ -914,7 +938,7 @@ class OctopusAPI:
         """
         Update the intelligent device sensor
         """
-        intelligent_device = self.tariffs.get("import", {}).get("intelligent_device", None)
+        intelligent_device = self.get_intelligent_device()
         if not intelligent_device:
             return
         planned = intelligent_device.get("planned_dispatches", [])
@@ -942,16 +966,15 @@ class OctopusAPI:
         response_data = await self.async_graphql_query(account_query.format(account_id=account_id), "get-account")
         if response_data is None:
             self.log("Error: OctopusAPI: Failed to retrieve account")
-            return None
+            return self.account_data
 
         response_account = response_data.get("account", {})
-
         if response_account:
-            return response_data
+            self.account_data = response_data
         else:
             self.log("Error: OctopusAPI: Failed to retrieve account data for account {}".format(account_id))
 
-        return None
+        return self.account_data
 
 
 class Octopus:

@@ -1,4 +1,5 @@
 # Custom Dictionary Words
+activepower
 adata
 adbase
 AIO
@@ -178,6 +179,7 @@ ppkwh
 Pred
 Predai
 Predbat
+predbatt
 Predheat
 pvbat
 pwindow
@@ -198,10 +200,12 @@ saverestore
 searr
 Selfrun
 Selfuse
+SFMB
 socb
 socs
 sofar
 SolarEdge
+solarman
 Solax
 solaxmodbus
 Solcast
