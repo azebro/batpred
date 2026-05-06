@@ -1381,6 +1381,12 @@ CONFIG_ITEMS = [
         "default": True,
     },
     {
+        "name": "load_exclude_subtract",
+        "friendly_name": "Subtract listed sensors (e.g. miner, server) from past consumption",
+        "type": "switch",
+        "default": True,
+    },
+    {
         "name": "holiday_days_left",
         "friendly_name": "Holiday days left",
         "type": "input_number",
@@ -2156,6 +2162,7 @@ APPS_SCHEMA = {
     "import_export_scaling": {"type": "float"},
     "export_triggers": {"type": "dict_list"},
     "iboost_energy_today": {"type": "sensor", "sensor_type": "float"},
+    "load_exclude_entities": {"type": "string_list"},
     "metric_octopus_gas": {"type": "sensor", "sensor_type": "float"},
     "rates_gas": {"type": "dict_list"},
     "futurerate_url": {"type": "string", "empty": False},

@@ -363,6 +363,13 @@ class LoadMLComponent(ComponentBase):
                     load_minutes_new[minute] = dp4(total_load_energy + load_delta)
                     total_load_energy += load_delta
 
+            # Subtract user-listed exclusion entities from load history (e.g. BTC miner, server)
+            load_exclude_subtract = self.get_arg("load_exclude_subtract", True)
+            load_exclude_energy = getattr(self.base, "load_exclude_energy", {}) or {}
+            if load_exclude_subtract and load_exclude_energy:
+                self.log("ML Component: Applying load_exclude_entities subtraction ({} datapoints)".format(len(load_exclude_energy)))
+                load_minutes_new = self.car_subtraction(load_minutes_new, load_exclude_energy, step=PREDICT_STEP, interpolate_gaps=True, max_gap_minutes=60, smoothing_window=3)
+
             # Get current cumulative load value (excludes car) before converting to per-step
             load_minutes_now = get_now_from_cumulative(load_minutes_new, self.minutes_now, backwards=True)
 

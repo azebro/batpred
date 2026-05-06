@@ -684,6 +684,8 @@ class PredBat(hass.Hass, Octopus, Energidataservice, Fetch, Plan, Marginal, Exec
         self.iboost_rate_threshold_export = 9999
         self.iboost_plan = []
         self.iboost_energy_subtract = True
+        self.load_exclude_subtract = True
+        self.load_exclude_energy = {}
         self.iboost_running = False
         self.iboost_running_full = False
         self.iboost_running_solar = False

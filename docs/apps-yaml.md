@@ -891,6 +891,26 @@ To disable, set it to 1440.
 - **iboost_energy_today** - Set to a sensor which tracks the amount of energy sent to your solar diverter, which can also be used to subtract from your historical load
 for more accurate predictions.
 
+## Load exclude entities
+
+- **load_exclude_entities** - Optional, a list of Home Assistant sensor `entity_id` values for loads that should be subtracted from historical house consumption before prediction, in-day comparison, output charts and machine learning training.
+
+Predbat auto-detects each sensor type from its `unit_of_measurement`: `kWh`, `Wh` and `MWh` (anything ending in `wh`, case-insensitive) are treated as cumulative energy, while `W` and `kW` are treated as instantaneous power and integrated to kWh internally. Any other unit is skipped with a warning and the rest of the feature continues.
+
+Missing data or sensor gaps are treated as 0, each entity is subtracted with 1.0 scaling, and any negative result where the excluded load is larger than the base load is clamped to 0.
+
+e.g.
+
+```yaml
+load_exclude_entities:
+  - sensor.miner_kwh
+  - sensor.server_power
+```
+
+Use the runtime switch `predbat.load_exclude_subtract` to temporarily disable subtraction without removing the `apps.yaml` list. The switch defaults to on.
+
+Only list sensors that are inside the same CT clamp that produces **load_today**, so their consumption is already counted in the house load total. Listing a load that is not part of **load_today**, for example a sensor that the CT clamp does not see, will under-report household consumption and lead to under-charging the battery.
+
 ## Inverter control configurations
 
 ### **inverter_limit**

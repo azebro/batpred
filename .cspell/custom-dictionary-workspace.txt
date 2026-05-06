@@ -37,6 +37,7 @@ batteryb
 beforeunload
 bierner
 brickatius
+BTC
 byok
 calib
 Cantarell
@@ -58,6 +59,7 @@ coro
 cprofile
 creds
 crosscharge
+CT
 customisation
 Customise
 cvalue

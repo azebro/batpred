@@ -194,11 +194,15 @@ class Fetch:
                     subtract_energy += self.get_historical(self.car_charging_energy, minute_previous + offset)
                 if self.iboost_energy_subtract and self.iboost_energy_today:
                     subtract_energy += self.get_historical(self.iboost_energy_today, minute_previous + offset)
+                if self.load_exclude_subtract and self.load_exclude_energy:
+                    subtract_energy += self.get_historical(self.load_exclude_energy, minute_previous + offset)
             else:
                 if self.car_charging_hold and self.car_charging_energy:
                     subtract_energy += self.get_from_incrementing(self.car_charging_energy, minute_previous + offset)
                 if self.iboost_energy_subtract and self.iboost_energy_today:
                     subtract_energy += self.get_from_incrementing(self.iboost_energy_today, minute_previous + offset)
+                if self.load_exclude_subtract and self.load_exclude_energy:
+                    subtract_energy += self.get_from_incrementing(self.load_exclude_energy, minute_previous + offset)
         load_yesterday = max(0, load_yesterday - subtract_energy)
 
         if self.car_charging_hold and (not self.car_charging_energy) and (load_yesterday >= (self.car_charging_threshold * step)):
@@ -698,6 +702,7 @@ class Fetch:
         self.pv_today = {}
         self.load_minutes = {}
         self.load_minutes_age = 0
+        self.load_exclude_energy = {}
         self.load_forecast = {}
         self.load_forecast_array = []
         self.pv_forecast_minute = {}
@@ -806,6 +811,9 @@ class Fetch:
 
         # Car charging hold - when enabled battery is held during car charging in simulation
         self.car_charging_energy = self.load_car_energy(self.now_utc)
+
+        # Load exclude entities - subtract listed sensors from past consumption
+        self.load_exclude_energy = self.load_exclude_data(self.now_utc)
 
         # Log current values
         self.log("Current data so far today: load {}kWh, import {}kWh, export {}kWh, PV {}kWh".format(dp2(self.load_minutes_now), dp2(self.import_today_now), dp2(self.export_today_now), dp2(self.pv_today_now)))
@@ -2355,3 +2363,111 @@ class Fetch:
         else:
             self.log("Car charging hold {}, threshold {}kWh".format(self.car_charging_hold, self.car_charging_threshold * 60.0))
         return self.car_charging_energy
+
+    def load_exclude_data(self, now_utc):
+        """
+        Load and aggregate energy data for user-listed exclusion entities (e.g. BTC miner, server).
+
+        Reads the load_exclude_entities config list, fetches per-entity history, converts to a common
+        cumulative kWh form, and sums them into a single combined cumulative dict stored on
+        self.load_exclude_energy keyed by minute offset (0 = now, larger key = older minutes back),
+        matching the semantics of iboost_energy_today / car_charging_energy.
+
+        Unit handling is done locally (rather than relying on minute_data's strict-case
+        required_unit conversion) so common lower-case variants like 'kwh' or 'wh' from custom
+        integrations are accepted. Detection rules (case-insensitive on unit_of_measurement):
+          - ends with 'wh': cumulative energy sensor. Sub-scale: mwh -> 1000, kwh -> 1.0, wh -> 0.001.
+          - 'w' or 'kw': instantaneous power sensor. Integrated to cumulative kWh by walking minutes
+            from oldest to newest. Negative readings (export / bidirectional CT) are treated as zero
+            so we never inflate the exclusion using generated energy.
+          - anything else: skipped with a warning.
+
+        Short-circuits and returns an empty dict when load_exclude_subtract is False, when the
+        entities list is empty, or when no entity yields data, to avoid wasted history fetches.
+        Duplicate entity_ids in the list are de-duplicated to avoid double-subtracting the same
+        sensor.
+
+        Args:
+            now_utc: Reference timestamp used as 'now' for relative minute keys.
+
+        Returns:
+            dict: Combined cumulative kWh dict keyed by minute offset, or {} when feature is off
+            or no data is available.
+        """
+        if not self.load_exclude_subtract:
+            self.load_exclude_energy = {}
+            return {}
+
+        entities = self.get_arg("load_exclude_entities", default=[], indirect=False)
+        if not entities:
+            self.load_exclude_energy = {}
+            return {}
+
+        if isinstance(entities, str):
+            entities = [entities]
+
+        combined_cumulative = {}
+        n_used = 0
+        n_skipped = 0
+        seen_entities = set()
+
+        for entity_id in entities:
+            if not entity_id or "." not in str(entity_id):
+                continue
+            entity_id = str(entity_id).strip()
+            if entity_id in seen_entities:
+                self.log("Warn: load_exclude_entities '{}' listed more than once, ignoring duplicate".format(entity_id))
+                continue
+            seen_entities.add(entity_id)
+
+            unit = (self.get_state_wrapper(entity_id, attribute="unit_of_measurement", default="") or "").lower()
+
+            entity_minutes = {}
+            if unit.endswith("wh"):
+                # Cumulative energy sensor. Convert any wh-variant to kWh ourselves (utils.minute_data
+                # is strict-case and would silently drop e.g. 'kwh' lower-case).
+                if unit == "mwh":
+                    scale = 1000.0
+                elif unit == "wh":
+                    scale = 0.001
+                else:
+                    # kwh, kWh, KWh, etc.
+                    scale = 1.0
+                entity_minutes = self.minute_data_import_export(self.max_days_previous, now_utc, entity_id, scale=scale, required_unit=None)
+            elif unit in ("w", "kw"):
+                # Power sensor. Fetch raw values then integrate to cumulative kWh ourselves.
+                power_scale = 1000.0 if unit == "kw" else 1.0
+                power_minutes, _ = self.minute_data_load(now_utc, entity_id, self.max_days_previous, required_unit=None, load_scaling=power_scale, interpolate=True, clean_increment=False)
+                if power_minutes:
+                    # Walk from oldest (largest key) to newest (0). Cumulative grows toward key 0,
+                    # matching the iboost_energy_today / car_charging_energy convention so that
+                    # get_historical / get_from_incrementing return per-minute deltas correctly.
+                    # Negative power (export) is clamped to zero rather than abs()'d so we never
+                    # treat self-generation as additional excluded consumption.
+                    max_key = max(power_minutes.keys())
+                    cumulative = 0.0
+                    entity_minutes = {}
+                    for m in range(max_key, -1, -1):
+                        power_w = max(power_minutes.get(m, 0), 0)
+                        cumulative += power_w / 60000.0
+                        entity_minutes[m] = cumulative
+            else:
+                self.log("Warn: load_exclude_entities '{}' has unsupported unit_of_measurement '{}', skipping".format(entity_id, unit))
+                n_skipped += 1
+                continue
+
+            if entity_minutes:
+                for m in entity_minutes:
+                    combined_cumulative[m] = combined_cumulative.get(m, 0) + entity_minutes[m]
+                n_used += 1
+            else:
+                self.log("Warn: load_exclude_entities '{}' returned no data".format(entity_id))
+                n_skipped += 1
+
+        if n_used > 0:
+            minutes_now = getattr(self, "minutes_now", 0)
+            today_kwh = (combined_cumulative.get(0, 0) - combined_cumulative.get(minutes_now, 0)) if combined_cumulative else 0
+            self.log("Info: load_exclude_entities active for {} sensor(s), {} skipped, ~{} kWh subtracted today".format(n_used, n_skipped, dp2(today_kwh)))
+
+        self.load_exclude_energy = combined_cumulative
+        return combined_cumulative

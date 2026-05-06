@@ -7,6 +7,18 @@ Make sure your [energy rates](energy-rates.md) are configured correctly for impo
 If you have an EV try to set up the [car charging sensor](car-charging.md#filtering-car-charging-energy-from-house-load) correctly so Predbat can tell what part of your historical load is EV charging.
 You might want to also set the [car charging plan](car-charging.md#planned-car-charging) so you can predict when your car is plugged in and how much it will charge.
 
+## Excluding known loads from history
+
+Use `load_exclude_entities` in `apps.yaml` when you have a known load that is included in your house load history but should not be treated as normal household demand for prediction purposes. Common examples include a BTC miner sensor, a dedicated server smart plug, an EV charger that does not already use `car_charging_energy`, or a freezer in a garage on a separate CT. Both cumulative energy sensors (`kWh`, `Wh`, `MWh`) and instantaneous power sensors (`W`, `kW`) are accepted; the unit is auto-detected from `unit_of_measurement` (case-insensitive).
+
+Important — read this before enabling:
+
+- Only list sensors that are inside the same CT clamp that produces `load_today`, so their consumption is already counted in the house load total. Listing a load that is not part of `load_today`, for example a sensor that the CT clamp does not see, will under-report household consumption and lead to under-charging the battery.
+- Excluded loads are completely removed from Predbat's historical baseline. Predbat will not schedule any battery charge to cover them. Only exclude a load if you intend to run it strictly from excess solar, from the grid directly, or to manage it through a separate system. If you exclude a 24/7 load such as a server or miner, your battery may drain overnight without Predbat realising the demand was there.
+- For instantaneous-power sensors, only positive readings are counted. Negative readings (export, bidirectional CT) are clamped to zero so your own solar generation is never treated as consumption.
+
+You can temporarily disable the subtraction with the runtime switch `predbat.load_exclude_subtract`, which defaults to on, without removing the entities from `apps.yaml`. The toggle takes effect on the next 5-minute cycle. EV charging has dedicated handling through `car_charging_energy`; `load_exclude_entities` is the generic catch-all for other loads that need subtracting from history.
+
 It is recommended that you [create a dashboard page](output-data.md#displaying-output-data) with all the required entities to control Predbat.
 
 This page gives a summary of some of the key configuration settings you should consider in Predbat for different energy tariffs;
