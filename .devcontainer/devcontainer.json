@@ -4,8 +4,14 @@
 	"name": "Python 3",
 	// Or use a Dockerfile or Docker Compose file. More info: https://containers.dev/guide/dockerfile
 	"image": "mcr.microsoft.com/devcontainers/python:1-3.11",
-	// Features to add to the dev container. More info: https://containers.dev/features.
-	// "features": {},
+	// Clone the repo into a named Docker volume instead of bind-mounting the
+	// Windows host workspace. This avoids CRLF-vs-LF churn that otherwise marks
+	// every file as modified inside the Linux container.
+	"workspaceMount": "source=batpred-src,target=/workspaces/batpred,type=volume",
+	"workspaceFolder": "/workspaces/batpred",
+	"features": {
+		"ghcr.io/devcontainers/features/git:1": {}
+	},
 	// Configure tool-specific properties.
 	"customizations": {
 		// Configure properties specific to VS Code.
@@ -48,7 +54,10 @@
 	// (Windows, macOS, Linux) without needing host-specific bind mounts.
 	// Ensure ssh-agent is running on the host with your key added (`ssh-add`).
 	// Use 'postCreateCommand' to run commands after the container is created.
-	"postCreateCommand": "pip install --upgrade pip && pip3 install -r requirements.txt"
+	// On first create the workspace volume is empty, so clone the repo into it.
+	// `git config --global --add safe.directory` avoids "dubious ownership" warnings
+	// when the volume is reused across rebuilds.
+	"postCreateCommand": "bash -lc 'sudo chown -R vscode:vscode /workspaces/batpred && git config --global --add safe.directory /workspaces/batpred && if [ ! -d .git ]; then git clone https://github.com/springfall2008/batpred.git . ; fi && git config core.autocrlf false && git config core.eol lf && pip install --upgrade pip && pip3 install -r requirements.txt'"
 	// Uncomment to connect as root instead. More info: https://aka.ms/dev-containers-non-root.
 	// "remoteUser": "root"
 }
